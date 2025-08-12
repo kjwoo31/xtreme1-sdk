@@ -688,11 +688,14 @@ class Client:
             It has some methods to convert the format of annotation result.
         """
         resp = self._get_data_and_result_info(dataset_id, data_ids)
+        if len(resp['results']) == 0:
+            print("No results available")
+            return -1
         result_dict = {result['dataId']: result for result in resp['results']}
         annotation = [
             {
                 'data': data,
-                'result': result_dict.get(data['id'], {})
+                'result': result_dict.get(data['dataId'], {})
             }
             for data in resp['data'][:limit]
         ]
