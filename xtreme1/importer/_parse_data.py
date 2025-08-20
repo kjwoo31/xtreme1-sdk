@@ -363,10 +363,9 @@ def parse_nuscenes(nuscenes_dataset_dir, upload_dir):
 class NuscenesDataset:
     def __init__(self, dataset_dir, output_dir):
         self.nusc = NuScenes(
-            version='v1.0-test',
+            version='v1.0-mini',
             dataroot=dataset_dir,
             verbose=True)
-        self.add_dataroot = True
         self.output_dir = output_dir
         # self.result_dir = ensure_dir(join(output_dir, 'result')) TODO
 
@@ -376,98 +375,90 @@ class NuscenesDataset:
             print("Current scene number: ", scene_idx)
             output_folder_name = join(self.output_dir, str(scene_idx))
             # Initialize
-            current_token = scene['first_sample_token']
-            channel_cfg_data = {}
-            channel_instrinsic = {}
-            camera_to_ego_mat_dict = {}
-            channel_folder_name = {}
-            camera_num = 0
-            lidar_num = 0
-            sample = self.nusc.get('sample', current_token)
-            for i, channel in enumerate(sample['data'].keys()):
-                sample_data = self.nusc.get('sample_data', sample['data'][channel])
+            channel_outputdir_dict = self.create_folder_for_each_channel(
+                self.nusc.sensor,
+                output_folder_name)
 
-                calib_info = self.nusc.get('calibrated_sensor', sample_data['calibrated_sensor_token'])
-                if sample_data['sensor_modality'] == 'camera':
-                    # get intrinsic
-                    intrinsic_mat = calib_info['camera_intrinsic']
-                    if len(intrinsic_mat) == 0:
-                        continue
-                    intrinsic = {
-                        "fx": intrinsic_mat[0][0],
-                        "fy": intrinsic_mat[1][1],
-                        "cx": intrinsic_mat[0][2],
-                        "cy": intrinsic_mat[1][2]
-                    }
-                    channel_instrinsic[channel] = intrinsic
-                    # get camera_to_ego extrinsic
-                    camera_to_ego_mat_dict[channel] = self.build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
-
-                    channel_folder_name[channel] = 'camera_image_' + str(camera_num)
-                    ensure_dir(join(output_folder_name, channel_folder_name[channel]))
-                    camera_num += 1
-                elif sample_data['sensor_modality'] == 'lidar':
-                    if lidar_num == 1:
-                        print("Cannot read more than 2 lidars. Discarding the second lidar")
-                        continue
-                    # get lidar_to_ego extrinsic
-                    lidar_to_ego_mat = self.build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
-
-                    channel_folder_name[channel] = 'lidar_point_cloud_' + str(lidar_num)
-                    ensure_dir(join(output_folder_name, channel_folder_name[channel]))
-                    lidar_num += 1
-                elif sample_data['sensor_modality'] == 'radar':
-                    continue
-                else:
-                    print("Unknown sensor modality: ", sample_data['sensor_modality'])
+            channel_instrinsic, camera_to_ego_mat_dict, lidar_to_ego_mat = self.get_intrinsics_from_first_sample(
+                list(channel_outputdir_dict.keys()),
+                self.nusc.get('sample', scene['first_sample_token']))
 
             # Get data
+            current_token = scene['first_sample_token']
             for sample_num in track(range(scene['nbr_samples']), description='progress'):
                 sample = self.nusc.get('sample', current_token)
                 file_name = str(scene_idx) + '_' + str(sample_num).zfill(len(str(scene['nbr_samples'])))
-                camera_ego_to_global_mat_dict = {}
-                for channel, token in sample['data'].items():
-                    sample_data = self.nusc.get('sample_data', token)
-                    if self.add_dataroot:
-                        file_path = join(self.nusc.dataroot, sample_data['filename'])
-                    if sample_data['sensor_modality'] == 'camera':
-                        img = file_path
-                        image_dir = join(output_folder_name, channel_folder_name[channel], file_name + '.jpg')
-                        shutil.copyfile(img, image_dir)
-                        camera_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
-                        camera_ego_to_global_mat = self.build_transformation_matrix(camera_ego_to_global['rotation'], camera_ego_to_global['translation'])
-                        camera_ego_to_global_mat_dict[channel] = camera_ego_to_global_mat
-                    elif sample_data['sensor_modality'] == 'lidar':
-                        pcd_file = join(output_folder_name, channel_folder_name[channel], file_name + '.pcd')
-                        self.bin_to_pcd(file_path, pcd_file)
-                        lidar_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
-                        lidar_ego_to_global_mat = self.build_transformation_matrix(lidar_ego_to_global['rotation'], lidar_ego_to_global['translation'])
-                    elif sample_data['sensor_modality'] == 'radar':
-                        continue
-                    else:
-                        print("Unknown sensor modality: ", sample_data['sensor_modality'])
-
-                # Config
-                # lidar -> ego -> global -> ego -> camera
-                for channel in camera_to_ego_mat_dict.keys():
-                    lidar_to_camera_mat = np.linalg.inv(camera_to_ego_mat_dict[channel]) @ np.linalg.inv(camera_ego_to_global_mat_dict[channel]) @ lidar_ego_to_global_mat @ lidar_to_ego_mat
-
-                    cfg_data = {
-                        "camera_internal": channel_instrinsic[channel],
-                        "camera_external": lidar_to_camera_mat.flatten().tolist(),
-                        "rowMajor": True, # Whether the camera extrinsic parameter is line order (default is false)
-                        # "height": 360, # optional
-                        # "width": 640, # optional
-                    }
-                    channel_cfg_data[channel] = cfg_data
-
-                camera_config_dir = ensure_dir(join(output_folder_name, 'camera_config'))
-                cfg_file = join(camera_config_dir, file_name + '.json')
-                with open(cfg_file, 'w', encoding='utf-8') as cf:
-                    json.dump(list(channel_cfg_data.values()), cf, indent=4)
+                camera_ego_to_global_mat_dict, lidar_ego_to_global_mat = self.save_sample_data(
+                    file_name,
+                    output_folder_name,
+                    channel_outputdir_dict,
+                    sample['data'])
+                self.write_camera_config(
+                    file_name,
+                    output_folder_name,
+                    channel_instrinsic,
+                    camera_to_ego_mat_dict,
+                    camera_ego_to_global_mat_dict,
+                    lidar_ego_to_global_mat,
+                    lidar_to_ego_mat)
 
                 # Move to next token
                 current_token = sample['next']
+
+    @staticmethod
+    def create_folder_for_each_channel(sensor_info_list, output_folder_name):
+        channel_outputdir_dict = {}
+        camera_num = 0
+        lidar_num = 0
+        for sensor_info in sensor_info_list:
+            channel = sensor_info['channel']
+            if sensor_info['modality'] == 'camera':
+                channel_outputdir_dict[channel] = 'camera_image_' + str(camera_num)
+                ensure_dir(join(output_folder_name, channel_outputdir_dict[channel]))
+                camera_num += 1
+            elif sensor_info['modality'] == 'lidar':
+                if lidar_num == 1:
+                    print("Cannot read more than 2 lidars. Discarding the second lidar")
+                    continue
+                channel_outputdir_dict[channel] = 'lidar_point_cloud_' + str(lidar_num)
+                ensure_dir(join(output_folder_name, channel_outputdir_dict[channel]))
+                lidar_num += 1
+            elif sensor_info['modality'] == 'radar':
+                continue
+            else:
+                print("Unknown sensor modality: ", sensor_info['modality'])
+        
+        return channel_outputdir_dict
+
+    def get_intrinsics_from_first_sample(self, channel_list, sample):
+        channel_instrinsic = {}
+        camera_to_ego_mat_dict = {}
+        for channel in channel_list:
+            sample_data = self.nusc.get('sample_data', sample['data'][channel])
+            calib_info = self.nusc.get('calibrated_sensor', sample_data['calibrated_sensor_token'])
+            if sample_data['sensor_modality'] == 'camera':
+                # get intrinsic
+                intrinsic_mat = calib_info['camera_intrinsic']
+                if len(intrinsic_mat) == 0:
+                    continue
+                intrinsic = {
+                    "fx": intrinsic_mat[0][0],
+                    "fy": intrinsic_mat[1][1],
+                    "cx": intrinsic_mat[0][2],
+                    "cy": intrinsic_mat[1][2]
+                }
+                channel_instrinsic[channel] = intrinsic
+                # get camera_to_ego extrinsic
+                camera_to_ego_mat_dict[channel] = self.build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
+            elif sample_data['sensor_modality'] == 'lidar':
+                # get lidar_to_ego extrinsic
+                lidar_to_ego_mat = self.build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
+            elif sample_data['sensor_modality'] == 'radar':
+                continue
+            else:
+                print("Unknown sensor modality: ", sample_data['sensor_modality'])
+
+        return channel_instrinsic, camera_to_ego_mat_dict, lidar_to_ego_mat
 
     @staticmethod
     def build_transformation_matrix(quat_wxyz, translation_matrix):
@@ -484,3 +475,61 @@ class NuscenesDataset:
         xyz = pc.points[:3, :].T  # shape (N, 3), ignoring intensity
         pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(xyz))
         o3d.io.write_point_cloud(pcd_file, pcd)
+
+    def save_sample_data(
+            self,
+            file_name,
+            output_folder_name,
+            channel_outputdir_dict,
+            data_dict):
+        camera_ego_to_global_mat_dict = {}
+        for channel, token in data_dict.items():
+            sample_data = self.nusc.get('sample_data', token)
+            if isabs(sample_data['filename']):
+                file_path = sample_data['filename']
+            else:
+                file_path = join(self.nusc.dataroot, sample_data['filename'])
+            if sample_data['sensor_modality'] == 'camera':
+                img = file_path
+                image_dir = join(output_folder_name, channel_outputdir_dict[channel], file_name + '.jpg')
+                shutil.copyfile(img, image_dir)
+                camera_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
+                camera_ego_to_global_mat = self.build_transformation_matrix(camera_ego_to_global['rotation'], camera_ego_to_global['translation'])
+                camera_ego_to_global_mat_dict[channel] = camera_ego_to_global_mat
+            elif sample_data['sensor_modality'] == 'lidar':
+                pcd_file = join(output_folder_name, channel_outputdir_dict[channel], file_name + '.pcd')
+                self.bin_to_pcd(file_path, pcd_file)
+                lidar_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
+                lidar_ego_to_global_mat = self.build_transformation_matrix(lidar_ego_to_global['rotation'], lidar_ego_to_global['translation'])
+            elif sample_data['sensor_modality'] == 'radar':
+                continue
+            else:
+                print("Unknown sensor modality: ", sample_data['sensor_modality'])
+        
+        return camera_ego_to_global_mat_dict, lidar_ego_to_global_mat
+
+    def write_camera_config(
+            self,
+            file_name,
+            output_folder_name,
+            channel_instrinsic,
+            camera_to_ego_mat_dict,
+            camera_ego_to_global_mat_dict,
+            lidar_ego_to_global_mat,
+            lidar_to_ego_mat):
+        channel_cfg_data = {}
+        for channel in camera_to_ego_mat_dict.keys():
+            # lidar -> ego -> global -> ego -> camera
+            lidar_to_camera_mat = np.linalg.inv(camera_to_ego_mat_dict[channel]) @ np.linalg.inv(camera_ego_to_global_mat_dict[channel]) @ lidar_ego_to_global_mat @ lidar_to_ego_mat
+
+            cfg_data = {
+                "camera_internal": channel_instrinsic[channel],
+                "camera_external": lidar_to_camera_mat.flatten().tolist(),
+                "rowMajor": True, # Whether the camera extrinsic parameter is line order (default is false)
+            }
+            channel_cfg_data[channel] = cfg_data
+
+        camera_config_dir = ensure_dir(join(output_folder_name, 'camera_config'))
+        cfg_file = join(camera_config_dir, file_name + '.json')
+        with open(cfg_file, 'w', encoding='utf-8') as cf:
+            json.dump(list(channel_cfg_data.values()), cf, indent=4)
