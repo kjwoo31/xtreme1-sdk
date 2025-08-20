@@ -1,5 +1,5 @@
 from ..exceptions import ParserException
-from ._parse_data import parse_coco, parse_xtreme1, parse_kitti
+from ._parse_data import parse_coco, parse_xtreme1, parse_kitti, parse_nuscenes
 
 __supported_format__ = {
     "COCO": {
@@ -52,6 +52,8 @@ class Parser:
             return self.from_xtreme1(output)
         elif format == 'KITTI':
             return self.from_kitti(output)
+        elif format == 'NUSCENES':
+            return self.from_nuscenes(output)
         else:
             raise ParserException(message=f'Do not support this format:<{format}> to parse')
 
@@ -84,6 +86,21 @@ class Parser:
 
         """
         return parse_kitti(kitti_dataset_dir=self.source_path, upload_dir=output)
+
+    def from_nuscenes(self, output: str):
+        """Parse the annotation result data in nuscenes dataset.
+
+        Parameters
+        ----------
+        output: str
+            The path to save the parsed results will be used for uploading.
+
+        Returns
+        -------
+        error message
+
+        """
+        return parse_nuscenes(nuscenes_dataset_dir=self.source_path, upload_dir=output)
 
     def from_xtreme1(self, output):
         """
