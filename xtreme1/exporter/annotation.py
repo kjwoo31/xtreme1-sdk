@@ -77,7 +77,7 @@ class Annotation:
             self.__dict__[key] = value
 
     def __gen_dir(self, input_dir):
-        save_folder = join(input_dir, f'x1 dataset {self.dataset_name} annotations')
+        save_folder = input_dir  # join(input_dir, f'x1 dataset {self.dataset_name} annotations')
         if not exists(save_folder):
             os.makedirs(save_folder, exist_ok=True)
         return save_folder

@@ -6,7 +6,7 @@ from os.path import *
 from ..exceptions import *
 from ..exporter.annotation import __supported_format__
 from ..exporter._standard import _to_json
-from ..exporter._popular import _to_coco, _to_voc, _to_labelme, _to_kitti, _to_kitti_like
+from ..exporter._popular import _to_coco, _to_voc, _to_labelme, _to_kitti, _to_kitti_like, _to_nuscenes
 
 
 class Result:
@@ -21,7 +21,8 @@ class Result:
         else:
             raise SDKException(code='SourceError', message=f'{src_zipfile} is not zip')
         zip_name = basename(src_zipfile)
-        self.dataset_name = '-'.join(splitext(zip_name)[0].split('-')[:-1])
+        self.dataset_name = splitext(zip_name)[0]
+        # self.dataset_name = '-'.join(splitext(zip_name)[0].split('-')[:-1])
         self.dropna = dropna
         self.annotation = self.__reconstitution()
 
@@ -46,12 +47,11 @@ class Result:
         id_result = {}
         annotation = []
         for result in results:
-            result_content = json.loads(zip_file.read(result))[0]
-            objs = []
-            for obj in json.loads(zip_file.read(result)):
-                objs.extend(obj['objects'])
-            result_content['objects'] = objs
-            id_result[result_content['dataId']] = result_content
+            result_content = json.loads(zip_file.read(result))
+            if 'dataId' in result_content:
+                id_result[result_content['dataId']] = result_content
+            else:
+                continue            
         for data in datas:
             data_content = json.loads(zip_file.read(data))
             data_result = id_result.get(data_content['dataId'], {})
@@ -173,6 +173,8 @@ class Result:
                 self.to_kitti(export_folder)
         elif format == 'KITTI_LIKE':
             self.to_kitti_like(export_folder)
+        elif format == 'NUSCENES':
+            self.to_nuscenes(export_folder)
         else:
             raise ConverterException(message=f'Do not support this format <{format}>')
 
@@ -272,3 +274,19 @@ class Result:
         """
 
         _to_kitti_like(self.annotation, self.__ensure_dir(export_folder))
+
+    def to_nuscenes(self, export_folder: str = None):
+        """Export data in nuscenes format.
+        Note that exports in this format only support lidar-fusion annotations.
+
+        Parameters
+        ----------
+        export_folder: The path to save the conversion result
+
+        Returns
+        -------
+        None
+
+        """
+
+        _to_nuscenes(self.annotation, self.__ensure_dir(export_folder))

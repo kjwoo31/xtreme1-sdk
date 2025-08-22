@@ -4,7 +4,9 @@ import base64
 import warnings
 import numpy as np
 import math
+import random
 import requests
+from scipy.spatial.transform import Rotation
 from rich.progress import track
 from datetime import datetime
 from os.path import *
@@ -557,3 +559,140 @@ def _to_kitti_like(annotation: list, export_folder: str):
                     tf.write(string)
         else:
             continue
+
+def generate_token():
+    token = ''.join(f"{random.randint(0,15):x}" for _ in range(32))
+    return token
+
+def name_token_to_json(name_token_dict, json_path):
+    output_list = []
+    for name, token in name_token_dict.items():
+        output_dict = {
+            "token": token,
+            "name": name,
+            "description": name}
+        output_list.append(output_dict)
+
+    with open(json_path, 'w') as f:
+        json.dump(output_list, f, indent=4)
+
+def token_context_to_json(token_context_dict, json_path):
+    output_list = []
+    for token, context in token_context_dict.items():
+        output_dict = {"token": token}
+        output_dict.update(context)
+
+        output_list.append(output_dict)
+
+    with open(json_path, 'w') as f:
+        json.dump(output_list, f, indent=4)
+
+def _to_nuscenes(annotation: list, export_folder: str):
+    # Read nuscenes dataset
+    from nuscenes.nuscenes import NuScenes
+    version_name = 'v1.0-mini'
+    nusc = NuScenes(version=version_name, dataroot=export_folder, verbose=True)
+
+    # Modify sample_annotation, attribute_tokens, instance, category
+    sample_annotation_dict = {}
+    attribute_dict = {}
+    category_dict = {}
+    instance_dict = {}
+    track_id_token_dict = {}
+    prev_annotation_token = ""
+    for anno in track(annotation, description='progress'):
+        data_info = anno['data']
+        file_name = data_info.get('name')
+        anno_objects = anno['result'].get('objects')
+
+        if not anno_objects:
+            continue
+
+        # Get scene, sample num from file name
+        file_name_front, file_name_second = file_name.split('_')
+        scene_num = int(file_name_front)
+        sample_num = int(file_name_second)
+
+        # Find sample from nuscenes dataset
+        scene = nusc.scene[scene_num]
+        first_sample_token = scene['first_sample_token']
+        sample_token = first_sample_token
+        for i in range(sample_num):
+            sample = nusc.get('sample', sample_token)
+            sample_token = sample['next']
+            if not sample_token:
+                raise ValueError("Scene %s does not have %d samples. Finding sample number %s" % 
+                                 (scene_num, i + 1, sample_num))
+        sample = nusc.get('sample', sample_token)
+
+        for anno_object in anno_objects:
+            if 'className' not in anno_object:
+                continue
+            current_annotation_token = generate_token()
+
+            # attribute
+            if anno_object['className'] not in attribute_dict.keys():
+                attribute_dict[anno_object['className']] = generate_token()
+
+            # category
+            if anno_object['className'] not in category_dict.keys():
+                category_dict[anno_object['className']] = generate_token()
+
+            # instance
+            track_id = anno_object['trackId']
+            if track_id in track_id_token_dict.keys():
+                track_token = track_id_token_dict[track_id]
+                instance_dict[track_token]['nbr_annotations'] += 1
+                instance_dict[track_token]['last_annotation_token'] = current_annotation_token
+            else:
+                track_id_token_dict[track_id] = generate_token()
+                instance_dict[track_id_token_dict[track_id]] = {
+                    "category_token": category_dict[anno_object['className']],
+                    "nbr_annotations": 1,
+                    "first_annotation_token": current_annotation_token,
+                    "last_annotation_token": current_annotation_token
+                }
+
+            # sample_annotation
+            rot = Rotation.from_euler(
+                'xyz',
+                [anno_object['contour']['rotation3D']['x'],
+                anno_object['contour']['rotation3D']['y'],
+                anno_object['contour']['rotation3D']['z']])
+            quat = rot.as_quat()
+
+            sample_annotation_dict[current_annotation_token] = {
+                "sample_token": sample['token'],
+                "instance_token": track_id_token_dict[track_id],
+                "attribute_tokens": [attribute_dict[anno_object['className']]],
+                "visibility_token": "1",  # Unused
+                "translation": [
+                    anno_object['contour']['center3D']['x'],
+                    anno_object['contour']['center3D']['y'],
+                    anno_object['contour']['center3D']['z']],
+                "size": [
+                    anno_object['contour']['size3D']['x'],
+                    anno_object['contour']['size3D']['y'],
+                    anno_object['contour']['size3D']['z']],
+                "rotation": [quat[3], quat[0], quat[1], quat[2]],
+                "num_lidar_pts": anno_object['contour']['pointN'],
+                "num_radar_pts": 0,
+                "next": "",
+                "prev": prev_annotation_token
+            }
+            if prev_annotation_token != "":
+                sample_annotation_dict[prev_annotation_token]['next'] = current_annotation_token
+            prev_annotation_token = current_annotation_token
+
+    name_token_to_json(
+        attribute_dict,
+        join(export_folder, version_name, "attribute.json"))
+    name_token_to_json(
+        category_dict,
+        join(export_folder, version_name, "category.json"))
+    token_context_to_json(
+        instance_dict,
+        join(export_folder, version_name, "instance.json"))
+    token_context_to_json(
+        sample_annotation_dict,
+        join(export_folder, version_name, "sample_annotation.json"))

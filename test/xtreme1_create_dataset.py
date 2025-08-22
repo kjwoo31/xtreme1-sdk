@@ -30,10 +30,12 @@ dataset_exist = False
 dataset_id = -1
 for dataset in dataset_list:
     if dataset.name == dataset_name:
+        print("Using existing dataset: " + dataset_name)
         dataset_id = dataset.id
         dataset_exist = True
 
 if not dataset_exist:
+    print("Making new dataset: " + dataset_name)
     # Create dataset
     dataset = x1_client.create_dataset(
         name=dataset_name, 
@@ -42,11 +44,14 @@ if not dataset_exist:
     )
     dataset_id = dataset.id
 
+zip_file_created = False
+zip_name = ''
 if os.path.isdir(data_path):
     print("data_path is directory. Making zip folder to upload xtreme1")
     zip_name = data_path.rstrip(os.sep)  # remove trailing slash if any
     zip_file = shutil.make_archive(zip_name, 'zip', data_path)
     data_path = zip_file
+    zip_file_created = True
 
 print("Uploading data from " + data_path + " to dataset " + dataset_name)
 response = x1_client.upload_data(
@@ -55,3 +60,8 @@ response = x1_client.upload_data(
     is_local=True
 )
 print("Upload done")
+
+if zip_file_created:
+    print("removing zip file: " + zip_name + ".zip")
+    os.remove(zip_name + '.zip')
+    print("Removed zip file")

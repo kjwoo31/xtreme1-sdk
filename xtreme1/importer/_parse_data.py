@@ -388,6 +388,7 @@ class NuscenesDataset:
             for sample_num in track(range(scene['nbr_samples']), description='progress'):
                 sample = self.nusc.get('sample', current_token)
                 file_name = str(scene_idx) + '_' + str(sample_num).zfill(len(str(scene['nbr_samples'])))
+
                 camera_ego_to_global_mat_dict, lidar_ego_to_global_mat = self.save_sample_data(
                     file_name,
                     output_folder_name,
@@ -519,6 +520,10 @@ class NuscenesDataset:
             lidar_to_ego_mat):
         channel_cfg_data = {}
         for channel in camera_to_ego_mat_dict.keys():
+            if channel not in camera_to_ego_mat_dict or channel not in camera_ego_to_global_mat_dict:
+                print("channel " + channel + " doesn't exist in " + file_name)
+                return False
+
             # lidar -> ego -> global -> ego -> camera
             lidar_to_camera_mat = np.linalg.inv(camera_to_ego_mat_dict[channel]) @ np.linalg.inv(camera_ego_to_global_mat_dict[channel]) @ lidar_ego_to_global_mat @ lidar_to_ego_mat
 
@@ -533,3 +538,5 @@ class NuscenesDataset:
         cfg_file = join(camera_config_dir, file_name + '.json')
         with open(cfg_file, 'w', encoding='utf-8') as cf:
             json.dump(list(channel_cfg_data.values()), cf, indent=4)
+
+        return True

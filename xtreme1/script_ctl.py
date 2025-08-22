@@ -1,4 +1,6 @@
 import argparse
+import os
+import shutil
 import json
 from xtreme1.exporter.converter import Result
 from xtreme1.importer.parser import Parser
@@ -24,8 +26,20 @@ def main():
 
     try:
         if mode == 'export':
+            zip_file_created = False
+            zip_name = ''
+            if os.path.isdir(src_path):
+                print("src_path is directory. Making zip folder to upload xtreme1")
+                zip_name = src_path.rstrip(os.sep)  # remove trailing slash if any
+                zip_file = shutil.make_archive(zip_name, 'zip', src_path)
+                src_path = zip_file
+                zip_file_created = True
+
             anno = Result(src_zipfile=src_path)
             anno.convert(format=format, export_folder=dst_path)
+
+            if zip_file_created:
+                os.remove(zip_name + '.zip')
             code = 'OK'
             message = ''
 
