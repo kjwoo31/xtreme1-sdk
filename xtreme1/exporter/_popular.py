@@ -14,6 +14,7 @@ from xml.dom.minidom import Document
 from .._version import __version__
 from ..exceptions import ConverterException
 from xtreme1._others import groupby
+from pyquaternion import Quaternion
 
 
 def _get_label(obj):
@@ -587,10 +588,25 @@ def token_context_to_json(token_context_dict, json_path):
     with open(json_path, 'w') as f:
         json.dump(output_list, f, indent=4)
 
+def build_transformation_matrix(quat_wxyz, translation_matrix):
+    rotation_matrix = Quaternion(quat_wxyz).rotation_matrix
+    transition_matrix = np.eye(4)
+    transition_matrix[:3, :3] = rotation_matrix
+    transition_matrix[:3, 3] = translation_matrix
+
+    return transition_matrix
+
+def decompose_transformation_matrix(matrix):
+    rotation_matrix = matrix[:3, :3]
+    translation_vector = matrix[:3, 3]
+    quat_wxyz = Quaternion(matrix=rotation_matrix).elements
+
+    return quat_wxyz, translation_vector
+
 def _to_nuscenes(annotation: list, export_folder: str):
     # Read nuscenes dataset
     from nuscenes.nuscenes import NuScenes
-    version_name = 'v1.0-mini'
+    version_name = 'v1.0-test'
     nusc = NuScenes(version=version_name, dataroot=export_folder, verbose=True)
 
     # Modify sample_annotation, attribute_tokens, instance, category
@@ -656,20 +672,32 @@ def _to_nuscenes(annotation: list, export_folder: str):
             # sample_annotation
             rot = Rotation.from_euler(
                 'xyz',
-                [anno_object['contour']['rotation3D']['x'],
-                anno_object['contour']['rotation3D']['y'],
+                [anno_object['contour']['rotation3D']['x'],  # Always 0
+                anno_object['contour']['rotation3D']['y'],  # Always 0
                 anno_object['contour']['rotation3D']['z']])
             quat = rot.as_quat()
+
+            # Convert lidar frame to global frame
+            ego_to_annotation_translation = build_transformation_matrix(
+                [1, 0, 0, 0],
+                [-anno_object['contour']['center3D']['y'],
+                anno_object['contour']['center3D']['x'],
+                anno_object['contour']['center3D']['z'] + anno_object['contour']['size3D']['z'] / 2]
+            )
+            sample_data = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
+            calib_info = nusc.get('calibrated_sensor', sample_data['calibrated_sensor_token'])
+            lidar_to_ego_mat = build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
+            ego_to_global = nusc.get('ego_pose', sample_data['ego_pose_token'])
+            ego_to_global_mat = build_transformation_matrix(ego_to_global['rotation'], ego_to_global['translation'])
+            output_mat = ego_to_annotation_translation @ ego_to_global_mat @ lidar_to_ego_mat
+            _, global_annotation_translation = decompose_transformation_matrix(output_mat)
 
             sample_annotation_dict[current_annotation_token] = {
                 "sample_token": sample['token'],
                 "instance_token": track_id_token_dict[track_id],
                 "attribute_tokens": [attribute_dict[anno_object['className']]],
                 "visibility_token": "1",  # Unused
-                "translation": [
-                    anno_object['contour']['center3D']['x'],
-                    anno_object['contour']['center3D']['y'],
-                    anno_object['contour']['center3D']['z']],
+                "translation": global_annotation_translation.tolist(),
                 "size": [
                     anno_object['contour']['size3D']['x'],
                     anno_object['contour']['size3D']['y'],
