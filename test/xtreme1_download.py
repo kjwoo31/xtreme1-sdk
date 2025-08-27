@@ -45,8 +45,6 @@ while True:
     # annotation
     print("Download annotation")
     annotation_result = x1_client.query_data_and_result(dataset_id=dataset_id, data_ids=data_ids)
-    if annotation_result == -1:
-        continue
     # save annotation
     annotation_result.to_json(
         export_folder=os.path.join(dataset_dir, 'result')
