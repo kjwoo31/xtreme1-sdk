@@ -46,12 +46,14 @@ class Result:
                 datas.append(fl)
         id_result = {}
         annotation = []
+        print('data list length: ', len(datas))
+        print('result list length: ', len(results))
         for result in results:
             result_content = json.loads(zip_file.read(result))
             if 'dataId' in result_content:
                 id_result[result_content['dataId']] = result_content
             else:
-                continue            
+                continue
         for data in datas:
             data_content = json.loads(zip_file.read(data))
             data_result = id_result.get(data_content['dataId'], {})

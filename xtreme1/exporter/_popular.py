@@ -690,7 +690,7 @@ def _to_nuscenes(annotation: list, export_folder: str):
             ego_to_global = nusc.get('ego_pose', sample_data['ego_pose_token'])
             ego_to_global_mat = build_transformation_matrix(ego_to_global['rotation'], ego_to_global['translation'])
             output_mat = ego_to_annotation_translation @ ego_to_global_mat @ lidar_to_ego_mat
-            _, global_annotation_translation = decompose_transformation_matrix(output_mat)
+            global_annotation_translation = output_mat[:3, 3]
 
             sample_annotation_dict[current_annotation_token] = {
                 "sample_token": sample['token'],

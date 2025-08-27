@@ -363,21 +363,23 @@ def parse_nuscenes(nuscenes_dataset_dir, upload_dir):
 class NuscenesDataset:
     def __init__(self, dataset_dir, output_dir):
         self.nusc = NuScenes(
-            version='v1.0-mini',
+            version='v1.0-test',
             dataroot=dataset_dir,
             verbose=True)
         self.output_dir = output_dir
-        # self.result_dir = ensure_dir(join(output_dir, 'result')) TODO
+        self.data_info_dir = ensure_dir(join(output_dir, 'data'))
+        self.raw_data_dir = ensure_dir(join(output_dir, 'raw_data'))
+        self.result_dir = ensure_dir(join(output_dir, 'result'))
 
     def import_dataset(self):
         print("Total scene number: ", len(self.nusc.scene))
         for scene_idx, scene in enumerate(self.nusc.scene):
             print("Current scene number: ", scene_idx)
-            output_folder_name = join(self.output_dir, str(scene_idx))
+            raw_data_folder_name = join(self.raw_data_dir, str(scene_idx))
             # Initialize
             channel_outputdir_dict = self.create_folder_for_each_channel(
                 self.nusc.sensor,
-                output_folder_name)
+                raw_data_folder_name)
 
             channel_instrinsic, camera_to_ego_mat_dict, lidar_to_ego_mat = self.get_intrinsics_from_first_sample(
                 list(channel_outputdir_dict.keys()),
@@ -389,25 +391,43 @@ class NuscenesDataset:
                 sample = self.nusc.get('sample', current_token)
                 file_name = str(scene_idx) + '_' + str(sample_num).zfill(len(str(scene['nbr_samples'])))
 
+                # raw data
                 camera_ego_to_global_mat_dict, lidar_ego_to_global_mat = self.save_sample_data(
                     file_name,
-                    output_folder_name,
+                    raw_data_folder_name,
                     channel_outputdir_dict,
                     sample['data'])
                 self.write_camera_config(
                     file_name,
-                    output_folder_name,
+                    raw_data_folder_name,
                     channel_instrinsic,
                     camera_to_ego_mat_dict,
                     camera_ego_to_global_mat_dict,
                     lidar_ego_to_global_mat,
                     lidar_to_ego_mat)
 
+                # data info
+                data_id = file_name
+                self.write_data_info(
+                    data_id,
+                    file_name,
+                    raw_data_folder_name,
+                    channel_outputdir_dict)
+
+                # annotation
+                result_file = join(self.result_dir, file_name + '.json')
+                self.parse_result(
+                    data_id,
+                    result_file,
+                    sample['anns'],
+                    lidar_to_ego_mat,
+                    lidar_ego_to_global_mat)
+
                 # Move to next token
                 current_token = sample['next']
 
     @staticmethod
-    def create_folder_for_each_channel(sensor_info_list, output_folder_name):
+    def create_folder_for_each_channel(sensor_info_list, raw_data_folder_name):
         channel_outputdir_dict = {}
         camera_num = 0
         lidar_num = 0
@@ -415,14 +435,14 @@ class NuscenesDataset:
             channel = sensor_info['channel']
             if sensor_info['modality'] == 'camera':
                 channel_outputdir_dict[channel] = 'camera_image_' + str(camera_num)
-                ensure_dir(join(output_folder_name, channel_outputdir_dict[channel]))
+                ensure_dir(join(raw_data_folder_name, channel_outputdir_dict[channel]))
                 camera_num += 1
             elif sensor_info['modality'] == 'lidar':
                 if lidar_num == 1:
                     print("Cannot read more than 2 lidars. Discarding the second lidar")
                     continue
                 channel_outputdir_dict[channel] = 'lidar_point_cloud_' + str(lidar_num)
-                ensure_dir(join(output_folder_name, channel_outputdir_dict[channel]))
+                ensure_dir(join(raw_data_folder_name, channel_outputdir_dict[channel]))
                 lidar_num += 1
             elif sensor_info['modality'] == 'radar':
                 continue
@@ -480,7 +500,7 @@ class NuscenesDataset:
     def save_sample_data(
             self,
             file_name,
-            output_folder_name,
+            raw_data_folder_name,
             channel_outputdir_dict,
             data_dict):
         camera_ego_to_global_mat_dict = {}
@@ -492,13 +512,13 @@ class NuscenesDataset:
                 file_path = join(self.nusc.dataroot, sample_data['filename'])
             if sample_data['sensor_modality'] == 'camera':
                 img = file_path
-                image_dir = join(output_folder_name, channel_outputdir_dict[channel], file_name + '.jpg')
+                image_dir = join(raw_data_folder_name, channel_outputdir_dict[channel], file_name + '.jpg')
                 shutil.copyfile(img, image_dir)
                 camera_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
                 camera_ego_to_global_mat = self.build_transformation_matrix(camera_ego_to_global['rotation'], camera_ego_to_global['translation'])
                 camera_ego_to_global_mat_dict[channel] = camera_ego_to_global_mat
             elif sample_data['sensor_modality'] == 'lidar':
-                pcd_file = join(output_folder_name, channel_outputdir_dict[channel], file_name + '.pcd')
+                pcd_file = join(raw_data_folder_name, channel_outputdir_dict[channel], file_name + '.pcd')
                 self.bin_to_pcd(file_path, pcd_file)
                 lidar_ego_to_global = self.nusc.get('ego_pose', sample_data['ego_pose_token'])
                 lidar_ego_to_global_mat = self.build_transformation_matrix(lidar_ego_to_global['rotation'], lidar_ego_to_global['translation'])
@@ -512,7 +532,7 @@ class NuscenesDataset:
     def write_camera_config(
             self,
             file_name,
-            output_folder_name,
+            raw_data_folder_name,
             channel_instrinsic,
             camera_to_ego_mat_dict,
             camera_ego_to_global_mat_dict,
@@ -534,9 +554,96 @@ class NuscenesDataset:
             }
             channel_cfg_data[channel] = cfg_data
 
-        camera_config_dir = ensure_dir(join(output_folder_name, 'camera_config'))
+        camera_config_dir = ensure_dir(join(raw_data_folder_name, 'camera_config'))
         cfg_file = join(camera_config_dir, file_name + '.json')
         with open(cfg_file, 'w', encoding='utf-8') as cf:
             json.dump(list(channel_cfg_data.values()), cf, indent=4)
 
         return True
+
+    def write_data_info(
+            self,
+            data_id,
+            file_name,
+            raw_data_folder_name,
+            channel_outputdir_dict):
+        data_info = {
+            "dataId": data_id,
+            "version": "Xtreme1 v0.6",
+            "name": file_name,
+            "type": "LIDAR_FUSION",
+            "cameraConfig": {
+                "filename": file_name + ".json",
+                "zipPath": join(os.path.basename(raw_data_folder_name), 'camera_config', file_name + '.json')
+            },
+        }
+        data_info['lidarPointClouds'] = [{
+            "filename": file_name + ".pcd",
+            "zipPath": join(os.path.basename(raw_data_folder_name), 'lidar_point_cloud_0', file_name + '.pcd')
+        }]
+        camera_image_info = []
+        for channel_name in channel_outputdir_dict.values():
+            if 'camera_image_' in channel_name:
+                camera_image_dict = {
+                    "filename": file_name + ".jpg",
+                    "zipPath": join(os.path.basename(raw_data_folder_name), channel_name, file_name + '.jpg')
+                }
+                camera_image_info.append(camera_image_dict)
+        data_info['cameraImages'] = camera_image_info
+
+        with open(join(self.data_info_dir, file_name + '.json'), 'w', encoding='utf-8') as rf:
+            json.dump(data_info, rf, indent=4)
+
+    def parse_result(
+            self,
+            data_id,
+            result_file,
+            annotation_token_list,
+            lidar_to_ego_mat,
+            lidar_ego_to_global_mat):
+        objects = []
+        for annotation_token in annotation_token_list:
+            annotation_dict = self.nusc.get('sample_annotation', annotation_token)
+
+            # size
+            length, width, height = annotation_dict['size']
+
+            # center
+            nuscenes_annotation_mat = self.build_transformation_matrix(
+                [1, 0, 0, 0],
+                annotation_dict['translation'])
+            xtreme1_annotation_mat = np.linalg.inv(lidar_to_ego_mat) @ np.linalg.inv(lidar_ego_to_global_mat) @ nuscenes_annotation_mat
+            xtreme1_annotation_center = xtreme1_annotation_mat[:3, 3]
+
+            # rotation
+            quat = annotation_dict['rotation']
+            q = Quaternion(quat[0], quat[1], quat[2], quat[3])
+            yaw = q.yaw_pitch_roll[0]
+
+            obj = {
+                "type": "3D_BOX",
+                "className": annotation_dict['category_name'],
+                "trackId": annotation_dict['instance_token'],
+                "trackName": annotation_dict['instance_token'],
+                "contour": {
+                    "size3D": {
+                        "x": length,
+                        "y": width,
+                        "z": height
+                    },
+                    "center3D": {
+                        "x": xtreme1_annotation_center[0],
+                        "y": xtreme1_annotation_center[1],
+                        "z": xtreme1_annotation_center[2]
+                    },
+                    "rotation3D": {
+                        "x": 0,
+                        "y": 0,
+                        "z": yaw
+                    },
+                    "pointN": annotation_dict['num_lidar_pts']
+                }
+            }
+            objects.append(obj)
+        with open(result_file, 'w', encoding='utf-8') as rf:
+            json.dump({"dataId": data_id, "objects": objects}, rf, indent=4)
