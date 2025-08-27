@@ -462,7 +462,8 @@ class Client:
         payload = {
             'fileUrl': url,
             'datasetId': dataset_id,
-            'source': source
+            'source': source,
+            'resultType': 'GROUND_TRUTH'
         }
 
         resp = self.api.post_request(endpoint=endpoint, payload=payload)

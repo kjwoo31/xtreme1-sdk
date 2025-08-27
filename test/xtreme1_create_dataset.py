@@ -1,7 +1,7 @@
 from xtreme1.client import Client
 import argparse
 import os
-import shutil
+import zipfile
 
 x1_client = Client(
     base_url='http://localhost:8190', 
@@ -44,14 +44,25 @@ if not dataset_exist:
     )
     dataset_id = dataset.id
 
-zip_file_created = False
-zip_name = ''
+zip_file_path = ''
 if os.path.isdir(data_path):
     print("data_path is directory. Making zip folder to upload xtreme1")
-    zip_name = data_path.rstrip(os.sep)  # remove trailing slash if any
-    zip_file = shutil.make_archive(zip_name, 'zip', data_path)
-    data_path = zip_file
-    zip_file_created = True
+    zip_path = data_path.rstrip(os.sep)  # remove trailing slash if any
+    zip_file_path = zip_path + '.zip'
+    base_folder_structure = ['camera_config', 'camera_image_', 'lidar_point_cloud_', 'result']
+    with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for foldername, subfolders, filenames in os.walk(data_path):
+            for folder_structure in base_folder_structure:
+                if folder_structure in os.path.basename(foldername):
+                    archive_folder = os.path.join(
+                        os.path.basename(zip_path),
+                        os.path.basename(foldername))
+
+                    for filename in filenames:
+                        src_file = os.path.join(foldername, filename)
+                        arc_file = os.path.join(archive_folder, filename)
+                        zf.write(src_file, arc_file)
+    data_path = zip_file_path
 
 print("Uploading data from " + data_path + " to dataset " + dataset_name)
 response = x1_client.upload_data(
@@ -61,7 +72,7 @@ response = x1_client.upload_data(
 )
 print("Upload done")
 
-if zip_file_created:
-    print("removing zip file: " + zip_name + ".zip")
-    os.remove(zip_name + '.zip')
+if zip_file_path != '':
+    print("removing zip file: " + zip_file_path)
+    os.remove(zip_file_path)
     print("Removed zip file")
