@@ -680,16 +680,16 @@ def _to_nuscenes(annotation: list, export_folder: str):
             # Convert lidar frame to global frame
             ego_to_annotation_translation = build_transformation_matrix(
                 [1, 0, 0, 0],
-                [-anno_object['contour']['center3D']['y'],
-                anno_object['contour']['center3D']['x'],
-                anno_object['contour']['center3D']['z'] + anno_object['contour']['size3D']['z'] / 2]
+                [anno_object['contour']['center3D']['x'],
+                anno_object['contour']['center3D']['y'],
+                anno_object['contour']['center3D']['z']]
             )
             sample_data = nusc.get('sample_data', sample['data']['LIDAR_TOP'])
             calib_info = nusc.get('calibrated_sensor', sample_data['calibrated_sensor_token'])
             lidar_to_ego_mat = build_transformation_matrix(calib_info['rotation'], calib_info['translation'])
             ego_to_global = nusc.get('ego_pose', sample_data['ego_pose_token'])
             ego_to_global_mat = build_transformation_matrix(ego_to_global['rotation'], ego_to_global['translation'])
-            output_mat = ego_to_annotation_translation @ ego_to_global_mat @ lidar_to_ego_mat
+            output_mat = ego_to_global_mat @ lidar_to_ego_mat @ ego_to_annotation_translation
             global_annotation_translation = output_mat[:3, 3]
 
             sample_annotation_dict[current_annotation_token] = {
