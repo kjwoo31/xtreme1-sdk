@@ -362,11 +362,14 @@ def parse_nuscenes(nuscenes_dataset_dir, upload_dir):
 
 class NuscenesDataset:
     def __init__(self, dataset_dir, output_dir):
+        self.version = 'v1.0-trainval'
+        if 'v1.0-mini' in os.listdir(dataset_dir):
+            self.version = 'v1.0-mini'
         self.nusc = NuScenes(
-            version='v1.0-test',
+            version=self.version,
             dataroot=dataset_dir,
             verbose=True)
-        self.output_dir = output_dir
+        self.output_dir = ensure_dir(output_dir)
         self.data_info_dir = ensure_dir(join(output_dir, 'data'))
         self.raw_data_dir = ensure_dir(join(output_dir, 'raw_data'))
         self.result_dir = ensure_dir(join(output_dir, 'result'))
@@ -391,13 +394,17 @@ class NuscenesDataset:
                 sample = self.nusc.get('sample', current_token)
                 file_name = str(scene_idx) + '_' + str(sample_num).zfill(len(str(scene['nbr_samples'])))
 
+                if len(sample['data']) != (len(camera_to_ego_mat_dict) + 1):
+                    print(f"{list(sample['data'].keys())} in {file_name}. Passing data since the dataset requires {len(camera_to_ego_mat_dict) + 1} channels.")
+                    continue
+
                 # raw data
                 camera_ego_to_global_mat_dict, lidar_ego_to_global_mat = self.save_sample_data(
                     file_name,
                     raw_data_folder_name,
                     channel_outputdir_dict,
                     sample['data'])
-                self.write_camera_config(
+                all_camera_channel_exist = self.write_camera_config(
                     file_name,
                     raw_data_folder_name,
                     channel_instrinsic,
@@ -405,6 +412,8 @@ class NuscenesDataset:
                     camera_ego_to_global_mat_dict,
                     lidar_ego_to_global_mat,
                     lidar_to_ego_mat)
+                if not all_camera_channel_exist:
+                    continue
 
                 # data info
                 data_id = file_name
@@ -540,10 +549,6 @@ class NuscenesDataset:
             lidar_to_ego_mat):
         channel_cfg_data = {}
         for channel in camera_to_ego_mat_dict.keys():
-            if channel not in camera_to_ego_mat_dict or channel not in camera_ego_to_global_mat_dict:
-                print("channel " + channel + " doesn't exist in " + file_name)
-                return False
-
             # lidar -> ego -> global -> ego -> camera
             lidar_to_camera_mat = np.linalg.inv(camera_to_ego_mat_dict[channel]) @ np.linalg.inv(camera_ego_to_global_mat_dict[channel]) @ lidar_ego_to_global_mat @ lidar_to_ego_mat
 

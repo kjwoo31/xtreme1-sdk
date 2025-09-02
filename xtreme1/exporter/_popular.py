@@ -607,6 +607,9 @@ def _to_nuscenes(annotation: list, export_folder: str):
     # Read nuscenes dataset
     from nuscenes.nuscenes import NuScenes
     version_name = 'v1.0-test'
+    version_name = 'v1.0-trainval'
+    if 'v1.0-mini' in os.listdir(export_folder):
+        version_name = 'v1.0-mini'
     nusc = NuScenes(version=version_name, dataroot=export_folder, verbose=True)
 
     # Modify sample_annotation, attribute_tokens, instance, category

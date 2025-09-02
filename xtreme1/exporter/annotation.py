@@ -61,8 +61,10 @@ class Annotation:
         self.anno_type = self.__query_dataset_type()
 
     def __query_dataset_type(self):
-
-        return self._client.query_dataset(self.dataset_id).type
+        if type(self._client.query_dataset(dataset_id=self.dataset_id)) is tuple:
+            for dataset in self._client.query_dataset(dataset_id=self.dataset_id)[0]:
+                if dataset.name == self.dataset_name:
+                    return dataset.type
 
     def __str__(self):
         return f"Annotation(dataset_id={self.dataset_id}, dataset_name={self.dataset_name})"
